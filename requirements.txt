@@ -1,0 +1,32 @@
+# ══════════════════════════════════════════════════════════════════════════
+# Python dependencies for the [177Lu]Lu-PSMA-617 dose-prediction ML pipeline
+#   - feature_selection_lasso_boruta.py   (Step 1: pre-selection)
+#   - train_ml_models_post_selection.py   (Step 2: training, post-selection)
+#   - train_lasso_infold_models.py        (alternative: combined in-fold
+#                                           selection + training, "Methodology 2")
+#
+# Tested with Python 3.12. Install with:
+#   pip install -r requirements.txt
+# ══════════════════════════════════════════════════════════════════════════
+
+numpy>=1.26,<2.0
+pandas>=2.1,<2.3
+scipy>=1.11,<1.15
+scikit-learn>=1.4,<1.6
+matplotlib>=3.8,<3.10
+xgboost>=2.0,<2.2
+shap>=0.45,<0.47
+optuna>=3.5,<3.7
+statsmodels>=0.14,<0.15
+boruta_py>=0.4,<0.5
+
+# Notes:
+# - train_lasso_infold_models.py uses only scikit-learn's built-in LassoCV
+#   for feature selection (no xgboost/shap TreeExplainer/LinearExplainer
+#   dispatch — it uses a single KernelExplainer path for all four supported
+#   algorithms), but still depends on shap and optuna as listed above.
+# - xgboost is only required by train_ml_models_post_selection.py if
+#   "XGBoost" is included in ALGORITHMS; it is otherwise unused.
+# - boruta_py is only required by feature_selection_lasso_boruta.py if the
+#   BORUTA (non-linear) branch is run; the LASSO branch only needs
+#   scikit-learn.
