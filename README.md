@@ -69,8 +69,3 @@ If you reference or adapt this code, please cite:
 > distributions in patients undergoing personalized [¹⁷⁷Lu]Lu-PSMA therapy*
 > (Master's dissertation). NOVA School of Science and Technology, NOVA
 > University Lisbon.
-
-## License
-
-Specify a license (e.g. MIT) appropriate for your institution's policy
-before making this repository public.
