@@ -31,8 +31,9 @@ configured algorithm, the script reports:
     - Jackknife+ conformal prediction intervals
 
 Outputs (per dose-integration method, per algorithm): predicted-vs-actual
-plots, Bland-Altman plots, a SHAP summary plot (fitted on the full dataset,
-for visualisation only), and CSV tables with per-patient predictions and
+plots (with a shaded +/-20% error cone around the identity line),
+Bland-Altman plots, a SHAP summary plot (fitted on the full dataset, for
+visualisation only), and CSV tables with per-patient predictions and
 aggregate performance metrics.
 
 --------------------------------------------------------------------------
@@ -41,9 +42,9 @@ DATA & ETHICS DISCLAIMER
 This repository does NOT include patient-level data. The input CSV
 referenced in INPUT_FILE below contains de-identified radiomic features and
 clinical biomarkers collected under an institutional ethics approval and is
-not publicly distributable. To reuse this script, point INPUT_FILE to your
-own fused PET+CT (+ clinical biomarker) feature file, structured with the
-same column layout (see "Expected input schema" below).
+not publicly distributable. This code is shared to document the modelling
+methodology; it is not intended to be run end-to-end without adapting it to
+a dataset of your own (see "Expected input schema" below).
 
 Expected input schema (INPUT_FILE):
     'Patient'                                                    -- patient ID (str)
@@ -133,6 +134,10 @@ N_TRIALS: int = 30
 #: Miscoverage rate for the Jackknife+ prediction interval
 #: (0.10 -> nominal 90% coverage).
 ALPHA_CI: float = 0.10
+
+#: Half-width of the shaded error cone drawn around the identity line on
+#: every predicted-vs-actual plot (0.20 -> +/-20%).
+ERROR_CONE_MARGIN: float = 0.20
 
 #: Global random seed, applied to NumPy, Optuna, and every stochastic
 #: scikit-learn estimator for reproducibility.
@@ -385,12 +390,15 @@ def plot_predicted_vs_actual(
     output_dir: str,
     y_lower: Optional[np.ndarray] = None,
     y_upper: Optional[np.ndarray] = None,
+    error_margin: float = ERROR_CONE_MARGIN,
 ) -> None:
-    """Save a predicted-vs-actual scatter plot with the identity line.
+    """Save a predicted-vs-actual scatter plot with the identity line and error cone.
 
-    If `y_lower`/`y_upper` are provided (Jackknife+ prediction interval
-    bounds), points are drawn with asymmetric error bars instead of plain
-    markers.
+    A shaded error cone of +/-`error_margin` (relative to the identity line,
+    y = x) is drawn to visually flag predictions falling outside a
+    clinically acceptable relative deviation. If `y_lower`/`y_upper` are
+    provided (Jackknife+ prediction interval bounds), points are drawn with
+    asymmetric error bars instead of plain markers.
 
     Args:
         y_true: Ground-truth (measured) absorbed doses.
@@ -400,29 +408,45 @@ def plot_predicted_vs_actual(
         output_dir: Directory where the PNG file will be saved.
         y_lower: Optional lower bound of the prediction interval per sample.
         y_upper: Optional upper bound of the prediction interval per sample.
+        error_margin: Half-width of the shaded error cone (0.20 -> +/-20%).
     """
     fig, ax = plt.subplots(figsize=(5, 5))
+
+    y_true_arr = np.asarray(y_true, dtype=float)
+    y_pred_arr = np.asarray(y_pred, dtype=float)
+
+    lo = min(np.min(y_true_arr), np.min(y_pred_arr)) * 0.9
+    hi = max(np.max(y_true_arr), np.max(y_pred_arr)) * 1.1
+    x_line = np.linspace(max(lo, 0), hi, 200)
+
+    # Shaded +/- error_margin cone around the identity line
+    ax.fill_between(
+        x_line,
+        x_line * (1 - error_margin),
+        x_line * (1 + error_margin),
+        color="steelblue", alpha=0.15,
+        label=f"\u00b1{int(error_margin * 100)}% error cone",
+    )
+
     if y_lower is not None and y_upper is not None:
         ax.errorbar(
-            y_true, y_pred,
-            yerr=[y_pred - y_lower, y_upper - y_pred],
+            y_true_arr, y_pred_arr,
+            yerr=[y_pred_arr - y_lower, y_upper - y_pred_arr],
             fmt="o", alpha=0.6, ecolor="steelblue", capsize=3,
             markersize=4, markeredgecolor="k", markeredgewidth=0.4,
             label="Prediction interval (90%)",
         )
     else:
-        ax.scatter(y_true, y_pred, alpha=0.7, s=40, edgecolors="k", linewidths=0.4)
+        ax.scatter(y_true_arr, y_pred_arr, alpha=0.7, s=40, edgecolors="k", linewidths=0.4)
 
-    lo = min(np.min(y_true), np.min(y_pred)) * 0.9
-    hi = max(np.max(y_true), np.max(y_pred)) * 1.1
     ax.plot([lo, hi], [lo, hi], "r--", linewidth=1, label="Identity (y=x)")
     ax.set_xlim(lo, hi)
     ax.set_ylim(lo, hi)
 
-    r2 = r2_score(y_true, y_pred)
-    mae = mean_absolute_error(y_true, y_pred)
-    pearson_r, _ = pearsonr(y_true, y_pred)
-    ccc = concordance_correlation_coefficient(y_true, y_pred)
+    r2 = r2_score(y_true_arr, y_pred_arr)
+    mae = mean_absolute_error(y_true_arr, y_pred_arr)
+    pearson_r, _ = pearsonr(y_true_arr, y_pred_arr)
+    ccc = concordance_correlation_coefficient(y_true_arr, y_pred_arr)
 
     ax.set_xlabel("Actual Dose (Gy/GBq)", fontsize=10)
     ax.set_ylabel("Predicted Dose (Gy/GBq)", fontsize=10)
@@ -687,10 +711,9 @@ def _huber_fallback(X_tr: np.ndarray, y_tr: np.ndarray):
 def _fit_with_fallback(algo_name: str, build_fn, best_params: dict, X_tr: np.ndarray, y_tr: np.ndarray):
     """Fit the requested model, falling back to Huber-specific or OLS recovery on failure.
 
-    Centralises the "try the tuned model, else fall back" logic that is
-    otherwise duplicated across the LOPOCV loop, the Jackknife+ loop, and
-    the final SHAP fit, avoiding the risk of the two diverging (as happened
-    in an earlier draft of this script).
+    Centralises the "try the tuned model, else fall back" logic that would
+    otherwise be duplicated across the LOPOCV loop, the Jackknife+ loop, and
+    the final SHAP fit.
 
     Args:
         algo_name: One of the keys of `ALGORITHMS`.
@@ -876,6 +899,7 @@ def main() -> None:
     print(f" LASSO-IN-FOLD + {len(ALGORITHMS_TO_RUN)} ALGORITHM(S) + OPTUNA | VOI: {VOI_NAME}")
     print(f" Scaling: {NORMALIZATION_METHOD}")
     print(f" Algorithms: {', '.join(ALGORITHMS_TO_RUN)}")
+    print(f" Predicted-vs-actual error cone: \u00b1{int(ERROR_CONE_MARGIN * 100)}%")
     print(" Fitted on training-fold data only -- zero data leakage")
     print("=" * 80)
 
