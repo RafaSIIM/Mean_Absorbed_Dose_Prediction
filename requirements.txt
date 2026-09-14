@@ -1,6 +1,5 @@
 # ══════════════════════════════════════════════════════════════════════════
 # Python dependencies for the [177Lu]Lu-PSMA-617 dose-prediction ML pipeline
-#   - feature_selection_lasso_boruta.py   (Step 1: pre-selection)
 #   - train_ml_models_post_selection.py   (Step 2: training, post-selection)
 #   - train_lasso_infold_models.py        (alternative: combined in-fold
 #                                           selection + training, "Methodology 2")
